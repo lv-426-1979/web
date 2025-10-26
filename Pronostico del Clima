@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Clima actual</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #111827;
+      --text: #e5e7eb;
+      --accent: #38bdf8;
+      --muted: #94a3b8;
+    }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+      background: linear-gradient(180deg, var(--bg), #0b1020);
+      color: var(--text);
+      display: grid;
+      min-height: 100vh;
+      place-items: center;
+      padding: 24px;
+    }
+    .card {
+      width: 100%;
+      max-width: 520px;
+      background: var(--card);
+      border: 1px solid #1f2937;
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-weight: 700;
+      font-size: 1.5rem;
+      letter-spacing: 0.2px;
+    }
+    .row { display: grid; gap: 12px; }
+    .muted { color: var(--muted); font-size: 0.95rem; }
+    .data {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 12px;
+    }
+    .pill {
+      background: #0b1220;
+      border: 1px solid #1f2937;
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .big { font-size: 2.2rem; font-weight: 700; }
+    .accent { color: var(--accent); }
+    .controls {
+      display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 16px;
+    }
+    input, button {
+      border-radius: 10px; border: 1px solid #334155;
+      padding: 10px 12px; background: #0c1322; color: var(--text);
+    }
+    button { cursor: pointer; border-color: var(--accent); }
+    .error { color: #fca5a5; margin-top: 10px; }
+    footer { margin-top: 12px; font-size: 0.85rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Clima al momento</h1>
+    <p class="muted">Detectamos tu ubicación y mostramos el clima actual. Si prefieres, busca por ciudad.</p>
+
+    <div class="controls">
+      <input id="city" type="text" placeholder="Buscar ciudad (ej. Juárez, MX)" />
+      <button id="search">Buscar</button>
+    </div>
+
+    <div id="status" class="muted" aria-live="polite" style="margin-top:8px;">Obteniendo tu ubicación…</div>
+
+    <section class="data" id="weather" hidden>
+      <div class="pill">
+        <div class="muted">Ubicación</div>
+        <div id="place" class="accent"></div>
+      </div>
+      <div class="pill">
+        <div class="muted">Condición</div>
+        <div id="condition"></div>
+      </div>
+      <div class="pill">
+        <div class="muted">Temperatura</div>
+        <div id="temp" class="big"></div>
+      </div>
+      <div class="pill">
+        <div class="muted">Viento</div>
+        <div id="wind"></div>
+      </div>
+    </section>
+
+    <div id="error" class="error" role="alert" hidden></div>
+
+    <footer>Fuente: Open‑Meteo (sin API key). Actualizado al cargar.</footer>
+  </main>
+
+  <script>
+    // Mapeo de códigos de clima (Open-Meteo weathercode)
+    const WEATHER_CODE = {
+      0: "Despejado",
+      1: "Mayormente despejado",
+      2: "Parcialmente nublado",
+      3: "Nublado",
+      45: "Niebla",
+      48: "Niebla con escarcha",
+      51: "Llovizna ligera",
+      53: "Llovizna",
+      55: "Llovizna intensa",
+      56: "Llovizna helada ligera",
+      57: "Llovizna helada intensa",
+      61: "Lluvia ligera",
+      63: "Lluvia",
+      65: "Lluvia intensa",
+      66: "Lluvia helada ligera",
+      67: "Lluvia helada intensa",
+      71: "Nieve ligera",
+      73: "Nieve",
+      75: "Nieve intensa",
+      77: "Gránulos de nieve",
+      80: "Chubascos ligeros",
+      81: "Chubascos",
+      82: "Chubascos intensos",
+      85: "Chubascos de nieve",
+      86: "Chubascos de nieve intensos",
+      95: "Tormenta",
+      96: "Tormenta con granizo ligero",
+      99: "Tormenta con granizo intenso"
+    };
+
+    const statusEl = document.getElementById('status');
+    const errorEl = document.getElementById('error');
+    const weatherEl = document.getElementById('weather');
+    const placeEl = document.getElementById('place');
+    const condEl = document.getElementById('condition');
+    const tempEl = document.getElementById('temp');
+    const windEl = document.getElementById('wind');
+    const cityInput = document.getElementById('city');
+    const searchBtn = document.getElementById('search');
+
+    function showError(msg) {
+      errorEl.textContent = msg;
+      errorEl.hidden = false;
+      statusEl.textContent = '';
+    }
+    function showStatus(msg) {
+      statusEl.textContent = msg;
+    }
+    function showWeather({ city, country, temp, wind, code }) {
+      placeEl.textContent = city ? `${city}${country ? ', ' + country : ''}` : 'Tu ubicación';
+      condEl.textContent = WEATHER_CODE[code] ?? 'Condición desconocida';
+      tempEl.textContent = `${Math.round(temp)} °C`;
+      windEl.textContent = `${Math.round(wind)} km/h`;
+      weatherEl.hidden = false;
+      errorEl.hidden = true;
+      showStatus('');
+    }
+
+    async function fetchWeatherByCoords(lat, lon) {
+      // Obtener clima actual
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,wind_speed_10m&timezone=auto`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('No se pudo obtener el clima');
+      const data = await res.json();
+      const current = data.current;
+      // Intentar resolver nombre de ciudad con reverse geocoding de Nominatim
+      let city = '', country = '';
+      try {
+        const g = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=es`);
+        const gj = await g.json();
+        const a = gj.address || {};
+        city = a.city || a.town || a.village || a.municipality || a.county || '';
+        country = a.country_code ? a.country_code.toUpperCase() : (a.country || '');
+      } catch(e) { /* opcional */ }
+      showWeather({
+        city, country,
+        temp: current.temperature_2m,
+        wind: current.wind_speed_10m,
+        code: current.weather_code
+      });
+    }
+
+    async function fetchWeatherByCity(query) {
+      showStatus('Buscando ciudad…');
+      // Geocoding de Open‑Meteo (sin API key)
+      const geo = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=1&language=es`);
+      const gj = await geo.json();
+      if (!gj.results || gj.results.length === 0) throw new Error('No se encontró la ciudad');
+      const r = gj.results[0];
+      await fetchWeatherByCoords(r.latitude, r.longitude);
+      placeEl.textContent = `${r.name}${r.country_code ? ', ' + r.country_code : ''}`;
+    }
+
+    async function init() {
+      try {
+        if ('geolocation' in navigator) {
+          showStatus('Obteniendo tu ubicación…');
+          navigator.geolocation.getCurrentPosition(async (pos) => {
+            const { latitude, longitude } = pos.coords;
+            try {
+              await fetchWeatherByCoords(latitude, longitude);
+            } catch (e) {
+              showError('No se pudo cargar el clima de tu ubicación.');
+            }
+          }, async () => {
+            showStatus('Permiso denegado. Puedes buscar por ciudad.');
+          }, { enableHighAccuracy: true, timeout: 10000 });
+        } else {
+          showStatus('Tu navegador no soporta geolocalización. Usa búsqueda por ciudad.');
+        }
+      } catch (e) {
+        showError('Ocurrió un error al iniciar la aplicación.');
+      }
+    }
+
+    searchBtn.addEventListener('click', async () => {
+      const q = cityInput.value.trim();
+      if (!q) return showError('Escribe una ciudad para buscar.');
+      errorEl.hidden = true;
+      try {
+        await fetchWeatherByCity(q);
+      } catch(e) {
+        showError(e.message || 'No se pudo obtener el clima para esa ciudad.');
+      }
+    });
+
+    // Enter para buscar
+    cityInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') searchBtn.click();
+    });
+
+    init();
+  </script>
+</body>
+</html>
